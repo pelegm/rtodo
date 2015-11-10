@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+.. rtodo
+
+Random TODO script.
+"""
+
+## Script framework
+import qpyscript.qpyscript as script
+import qpyscript.pyslext.console as cns
+
+## Database
+import yaml
+
+## Time
+import datetime as dt
+
+## OS
+import errno
+
+## Randomness
+import random
+
+
+WEEK_SECONDS = dt.timedelta(weeks=1).total_seconds()
+
+
+random.seed()
+
+
+def wchoice(weights, choices):
+    total = sum(weights)
+    r = random.uniform(0, total)
+    x = 0
+    for w, c in zip(weights, choices):
+        if x + w > r:
+            return c
+        x += w
+    return None
+
+
+class RTodo(script.Script):
+    arguments = [
+        script.Argument(["action"], type=str, nargs='?'),
+        script.Argument(["text"], type=str, nargs='?'),
+        script.Argument(["-p", "--priority"], type=int, default=3),
+    ]
+
+    _priority_color = {
+        1: 37,
+        2: 33,
+        3: 61,
+        4: 125,
+        5: 160,
+    }
+
+    _priority_rates = dict((p, (p*5)**(1./7)) for p in range(1, 6))
+
+    def _get_db(self):
+        try:
+            with open(".rtodo", 'r') as dbf:
+                return yaml.load(dbf)
+
+        except IOError as e:
+            ## Database does not exist
+            if e.errno == errno.ENOENT:
+                return {}
+
+        except StandardError as e:
+            self.critical(str(e))
+
+    def _update_db(self, db):
+        try:
+            with open(".rtodo", 'w') as dbf:
+                yaml.dump(db, dbf)
+
+        except StandardError as e:
+            self.critical(str(e))
+
+    def _print_task(self, task, verbose=False):
+        _id, _task = task[0], task[1]
+        text = _task['text']
+        color = self._priority_color[_task['priority']]
+        if verbose:
+            value = self._task_value(task)
+            print(" {c}{i}.{nc} {t} [{v}]".format(
+                c=cns.xcolor(color), i=_id, nc=cns.nocolor(), t=text, v=value))
+        else:
+            print(" {c}{i}.{nc} {t}".format(
+                c=cns.xcolor(color), i=_id, nc=cns.nocolor(), t=text))
+
+    def _sort_key(self, task):
+        return task[1]['priority'], self.now - task[1]['time']
+
+    def _task_value(self, task):
+        """ Return a combination of the task priority and the time passed since
+        issued.
+
+        In general, value grows exponentially.
+        """
+        time = (self.now - task[1]['time']).total_seconds()
+        priority = task[1]['priority']
+        rate = self._priority_rates[priority]
+        return priority * rate ** (time / WEEK_SECONDS)
+
+    def list(self):
+        db = self._get_db()
+
+        ## db is None if there's no database yet.  In that case, return
+        ## quietly.
+        if not db:
+            return
+
+        for task in sorted(db.items(), key=self._sort_key, reverse=True):
+            self._print_task(task)
+
+    def add(self):
+        priority = self.priority
+        if not self.text:
+            self.critical("Task text is missing.")
+
+        task = {'text': self.text, 'priority': self.priority, 'time': self.now}
+        db = self._get_db()
+        ids = db.keys()
+        _id = max(ids) + 1 if ids else 1
+        db[_id] = task
+        self._update_db(db)
+
+    def fetch(self):
+        db = self._get_db()
+
+        ## db is None if there's no database yet.  In that case, return
+        ## quietly.
+        if not db:
+            return
+
+        weights = []
+        tasks = []
+        for task in db.items():
+            weights.append(self._task_value(task))
+            tasks.append(task)
+
+        task = wchoice(weights, tasks)
+        self._print_task(task)
+
+    def verbose(self):
+        db = self._get_db()
+
+        ## db is None if there's no database yet.  In that case, return
+        ## quietly.
+        if not db:
+            return
+
+        for task in sorted(db.items(), key=self._sort_key, reverse=True):
+            self._print_task(task, verbose=True)
+
+    def run(self):
+        self.now = dt.datetime.now()
+
+        if not self.action:
+            self.action = 'fetch'
+
+        if self.action == 'list':
+            self.list()
+            return
+
+        if self.action == 'add':
+            self.add()
+            return
+
+        if self.action == 'fetch':
+            self.fetch()
+            return
+
+        if self.action == 'verbose':
+            self.verbose()
+            return
+
+        self.critical("Unknown action `{}'".format(self.action))
+
+
+if __name__ == "__main__":
+    rtodo = RTodo()
+    rtodo.run()
+    rtodo.exit()

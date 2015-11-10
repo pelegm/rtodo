@@ -1,0 +1,3 @@
+[submodule "qpyscript"]
+	path = qpyscript
+	url = git@github.com:pelegm/qpyscript.git
