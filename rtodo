@@ -44,6 +44,7 @@ class RTodo(script.Script):
         script.Argument(["action"], type=str, nargs='?'),
         script.Argument(["text"], type=str, nargs='?'),
         script.Argument(["-p", "--priority"], type=int, default=3),
+        script.Argument(["-t", "--time"], type=int, default=7),
     ]
 
     _priority_color = {
@@ -143,6 +144,52 @@ class RTodo(script.Script):
         task = wchoice(weights, tasks)
         self._print_task(task)
 
+    def _search_task(self):
+        db = self._get_db()
+
+        ## db is None if there's no database yet.  In that case, return
+        ## quietly.
+        if not db:
+            return
+
+        found = []
+        for _id, task in db.items():
+            if self.text in task['text']:
+                found.append((_id, task))
+
+        if len(found) == 1:
+            return found[0]
+
+    def postpone(self):
+        db = self._get_db()
+
+        ## db is None if there's no database yet.  In that case, return
+        ## quietly.
+        if not db:
+            return
+
+        ## The text argument can be an integer, in which case it is first
+        ## thought of as the id of the task
+        try:
+            _id = int(self.text)
+            try:
+                task = _id, db[_id]
+            except KeyError:
+                raise ValueError
+        except ValueError:
+            task = self._search_task()
+        except TypeError:
+            self.critical("Postpone which task?")
+
+        if task is None:
+            self.critical("Could not find task `{}'".format(self.text))
+        else:
+            _id, _task = task
+
+        self.info("Postponing task {}".format(_id))
+        db[_id]['time'] += dt.timedelta(self.time)
+        self._update_db(db)
+
     def verbose(self):
         db = self._get_db()
 
@@ -170,6 +217,10 @@ class RTodo(script.Script):
 
         if self.action == 'fetch':
             self.fetch()
+            return
+
+        if self.action == 'postpone':
+            self.postpone()
             return
 
         if self.action == 'verbose':
